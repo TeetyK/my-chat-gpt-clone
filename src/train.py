@@ -3,66 +3,59 @@ import torch.nn as nn
 import torch.nn.functional as F
 from src.GPTBERT import MyGPTBERT
 from src.create_mask import create_masks
-def train():
-    # ==========================================
-    # 1. กำหนดค่าเริ่มต้นและสร้างโมเดล
-    # ==========================================
-    vocab_size = 5000  # สมมติว่าพจนานุกรมของเรามี 5,000 คำ
-    pad_idx = 0        # ให้เลข 0 แทนช่องว่าง <PAD>
-    batch_size = 2     # เทรนทีละ 2 ประโยคพร้อมกัน
-    seq_len = 10       # ความยาวประโยคสูงสุด 10 คำ
+import torch
 
-    # สร้างโมเดลที่เราเขียนไว้ (โยนเข้า GPU ถ้ามี)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MyGPTBERT(vocab_size=vocab_size, d_model=256, num_heads=8, num_layers=4).to(device)
-
-    # ==========================================
-    # 2. จำลองข้อมูล (เหมือนเราดึงมาจาก DataLoader)
-    # ==========================================
-    # สุ่มตัวเลขตั้งแต่ 1 ถึง vocab_size (หลีกเลี่ยง 0 เพราะเป็น PAD)
-    src_data = torch.randint(1, vocab_size, (batch_size, seq_len)).to(device)
-    tgt_data = torch.randint(1, vocab_size, (batch_size, seq_len)).to(device)
-
-    # ==========================================
-    # 3. กำหนด Optimizer และ Loss Function
-    # ==========================================
-    # Adam คือตัวปรับน้ำหนักที่นิยมที่สุดสำหรับ Transformer
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.0001)
-
-    # CrossEntropyLoss คือตัววัดความผิดพลาด (บอกให้มันเมินคำที่เป็น <PAD> ไปซะ)
-    criterion = nn.CrossEntropyLoss(ignore_index=pad_idx)
-
-    # ==========================================
-    # 4. เริ่ม Training Loop (สมมติว่าฝึก 5 รอบ)
-    # ==========================================
-    print("🚀 เริ่มเทรนโมเดล...")
-    model.train() # เปิดโหมด Training (เพื่อให้ Dropout และ LayerNorm ทำงาน)
-
-    for epoch in range(5):
-        optimizer.zero_grad() # ล้างค่า Gradient เก่าทิ้งก่อน
+def train_model(model, dataloader, optimizer, criterion, device, pad_idx, vocab_size, num_epochs=3, save_path="my_llm_model.pth"):
+    """
+    ฟังก์ชันสำหรับเทรนโมเดล Encoder-Decoder (BERT+GPT)
+    """
+    print(f"🚀 เริ่มเทรนบน: {device} | จำนวนรอบ: {num_epochs} Epochs")
+    
+    # ดันโมเดลไปที่ GPU (ถ้ามี) และเปิดโหมด Training
+    model = model.to(device)
+    model.train()
+    
+    for epoch in range(num_epochs):
+        total_loss = 0
         
-        # แบ่งข้อมูลฝั่ง GPT เป็น Input และ เฉลย (เลื่อนไป 1 ตำแหน่ง)
-        tgt_input = tgt_data[:, :-1]   # เอาคำแรก ถึง ก่อนคำสุดท้าย
-        tgt_expected = tgt_data[:, 1:] # เอาคำที่สอง ถึง คำสุดท้าย
+        # วนลูปดึงข้อมูลจาก DataLoader ทีละ Batch
+        for batch_idx, batch in enumerate(dataloader):
+            src = batch['src'].to(device)
+            tgt = batch['tgt'].to(device)
+            
+            # แบ่ง tgt เป็น Input และ เฉลย
+            tgt_input = tgt[:, :-1]
+            tgt_expected = tgt[:, 1:]
+            
+            # สร้าง Mask ปิดตา (ใช้ฟังก์ชัน create_masks ที่เราเคยเขียนไว้)
+            src_mask, tgt_mask = create_masks(src, tgt_input, pad_idx)
+            
+            # ล้างค่า Gradient เก่า
+            optimizer.zero_grad()
+            
+            # 1. Forward Pass: ให้โมเดลลองเดา
+            output = model(src, tgt_input, src_mask, tgt_mask)
+            
+            # 2. คำนวณ Loss: ปรับรูปร่างเป็น 2 มิติเพื่อเทียบกับเฉลย 1 มิติ
+            loss = criterion(output.reshape(-1, vocab_size), tgt_expected.reshape(-1))
+            
+            # 3. Backward Pass: หาจุดที่ผิดพลาด
+            loss.backward()
+            
+            # 4. Optimize: อัปเดตสมองโมเดล
+            optimizer.step()
+            
+            total_loss += loss.item()
+            
+            # ปริ้นท์บอกความคืบหน้าทุกๆ 100 บัช (เพื่อไม่ให้เงียบเกินไป)
+            if (batch_idx + 1) % 100 == 0:
+                print(f"  - Batch {batch_idx + 1}/{len(dataloader)} | Loss: {loss.item():.4f}")
+                
+        # สรุปผลของแต่ละ Epoch
+        avg_loss = total_loss / len(dataloader)
+        print(f"✅ Epoch {epoch+1}/{num_epochs} เสร็จสิ้น | Average Loss: {avg_loss:.4f}\n")
         
-        # สร้าง Mask
-        src_mask, tgt_mask = create_masks(src_data, tgt_input, pad_idx)
-        
-        # 💥 FORWARD PASS: สั่งให้โมเดลคิด
-        predictions = model(src_data, tgt_input, src_mask, tgt_mask)
-        
-        # ปรับรูปร่างข้อมูลก่อนคำนวณ Loss ให้เป็น 2 มิติ (Batch*SeqLen, VocabSize)
-        loss = criterion(
-            predictions.reshape(-1, vocab_size), 
-            tgt_expected.reshape(-1)
-        )
-        
-        # 💥 BACKWARD PASS: ให้โมเดลเรียนรู้จากความผิดพลาด
-        loss.backward()
-        
-        # 💥 OPTIMIZE: อัปเดตสมอง (ปรับน้ำหนัก)
-        optimizer.step()
-        
-        print(f"Epoch {epoch+1}/5 | Loss: {loss.item():.4f}")
-
-    print("✅ เทรนเสร็จสมบูรณ์!")
+    # เมื่อเทรนครบทุกรอบ ให้เซฟน้ำหนักโมเดลเก็บไว้
+    if save_path:
+        torch.save(model.state_dict(), save_path)
+        print(f"💾 เซฟโมเดลไว้ที่ '{save_path}' เรียบร้อย พร้อมนำไปใช้งาน!")
