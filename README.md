@@ -24,3 +24,8 @@ https://nlp.seas.harvard.edu/annotated-transformer/
 
 # Result training & test
 <img src='TEST.png' width=500 height=500>
+
+# แนวทางการทำต่อ
+```bash
+ทำ RL โดยหลังจากเทรนมาเป็นระยะเวลาหนึ่ง RLHF (Reinforcement Learning from Human Feedback) โดยให้โมเดลตอบมาหลายๆ แบบ แล้วให้ "มนุษย์" ไปกด Like/Dislike เป็นรางวัล (Reward) โมเดลจะค่อยๆ ปรับพฤติกรรมตัวเองให้ตอบได้สุภาพ ปลอดภัย และถูกใจมนุษย์มากขึ้น
+```
